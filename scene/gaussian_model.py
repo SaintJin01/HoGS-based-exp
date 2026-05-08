@@ -103,6 +103,37 @@ class GaussianModel:
     @property
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
+    
+    def report_w(self):
+        w_float = self.get_w.float() if self.get_w.dtype not in [torch.float16, torch.float32, torch.float64] else self.get_w
+        
+        # 통계값 계산 및 스칼라 값 추출 (.item())
+        w_mean = w_float.mean().item()
+        w_min = w_float.min().item()
+        w_max = w_float.max().item()
+        w_var = w_float.var().item()
+        w_std = w_float.std().item()
+
+        # 결과 출력
+        print(f"--- Weight (w) Statistics ---")
+        print(f"Mean (평균):     {w_mean:.4f}")
+        print(f"Min (최소):      {w_min:.4f}")
+        print(f"Max (최대):      {w_max:.4f}")
+        print(f"Variance (분산): {w_var:.4f}")
+        print(f"Std Dev (표준편차): {w_std:.4f}")
+        print(f"-----------------------------")
+
+        return [w_mean, w_min, w_max, w_var, w_std]
+    
+    def decrease_w(self, decrease_amount):
+        with torch.no_grad():
+            self._w.sub_(decrease_amount)
+    
+    def clamp_min_w(self, minimum_threshold):
+        with torch.no_grad():
+            clamped_w = torch.clamp(self.get_w, min=minimum_threshold)
+            new_w = self.w_inverse_activation(clamped_w)
+            self._w.copy_(new_w)
 
     def get_covariance(self, scaling_modifier=1):
         return self.covariance_activation(self.get_scaling * pc.get_w_inv.unsqueeze(1), scaling_modifier,

@@ -59,7 +59,7 @@ def custom_update_param2(param, base_lr, scale, eps=1e-8):
         param.sub_(param.grad * scaled_lr.unsqueeze(-1))
 
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, w_decrease_amount, w_min):
     random_seed = 3407
     torch.manual_seed(random_seed)
     torch.cuda.manual_seed(random_seed)
@@ -89,6 +89,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     losses = []
     train_psnr = []
     test_psnr = []
+    w_report = []
+    push_back = True
     for iteration in range(first_iter, opt.iterations + 1):
         if network_gui.conn == None:
             network_gui.try_connect()
@@ -124,6 +126,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             pipe.debug = True
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
+
+        # decrease w
+        if push_back:
+            gaussians.decrease_w(w_decrease_amount)
+        # clamp min w
+        gaussians.clamp_min_w(w_min)
+        # report w
+        if iteration % 100 == 0:
+            if iteration > 25000:
+                push_back = False
+            else:
+                push_back != push_back
+            w_report.append(gaussians.report_w())
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], \
@@ -207,6 +222,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     np.save(dataset.model_path + "/train_psnr.npy", train_psnr)
     np.save(dataset.model_path + "/test_psnr.npy", test_psnr)
+    np.save(dataset.model_path + "/w_report.npy", w_report)
 
     loss_output_path = dataset.model_path + "/lossPlot.jpg"
     plt.figure()
@@ -222,6 +238,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     plt.close()
 
+    # w report
+    wmean_output_path = dataset.model_path + "/wMeanPlot.jpg"
+    w_report = np.load(dataset.model_path + "/w_report.npy")
+    plt.figure()
+    plt.plot(w_report[:, 0])
+    plt.xlabel("iterations")
+    plt.ylabel("w_mean")
+    plt.title("w mean")
+
+    figure = plt.gcf()  # get current figure
+    figure.set_size_inches(20, 10)
+
+    plt.savefig(wmean_output_path, dpi=150)
+
+    plt.close()
 
 def prepare_output_and_logger(args):
     if not args.model_path:
@@ -300,12 +331,14 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int,
-                        default=[7_000, 10000, 20000, 30_000, 50000, 70000, 100000])
+                        default=[7_000, 10000, 20000, 30_000, 40000, 50000, 70000, 100000])
     parser.add_argument("--save_iterations", nargs="+", type=int,
-                        default=[7_000, 10000, 20000, 30_000, 50000, 70000, 100000])
+                        default=[7_000, 10000, 20000, 30_000, 40000, 50000, 70000, 100000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default=None)
+    parser.add_argument("--w_decrease_amount", type=float, default=2e-4)
+    parser.add_argument("--w_min", type=float, default=0.002)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
@@ -318,7 +351,7 @@ if __name__ == "__main__":
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations,
-             args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
+             args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.w_decrease_amount, args.w_min)
 
     # All done
     print("\nTraining complete.")
